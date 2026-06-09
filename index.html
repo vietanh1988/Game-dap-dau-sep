@@ -943,11 +943,12 @@ function speakReaction(text) {
 // ════════════════════════════════════════════════════════
 //  BACKGROUND MUSIC  (Yakety Sax / Benny Hill bựa style)
 // ════════════════════════════════════════════════════════
-let bgMusicRunning  = false;
-let bgGainNode      = null;
-let bgTickActive    = false;   // true while setTimeout loop is running
-let _bgT = 0, _bgN = 0, _bgB = 0, _bgBeat = 0;  // scheduler state (module-level)
+let bgMusicRunning = false;
+let bgSourceNode   = null;
+let bgGainNode     = null;
+let _bgBuffer      = null;   // pre-generated AudioBuffer (generated once, reused)
 
+// ── Melody note table ──
 const BG_MELODY = [
   [494,0.11],[587,0.11],[659,0.22],[659,0.11],[587,0.11],[494,0.11],[587,0.11],
   [440,0.22],[440,0.11],[392,0.11],[440,0.22],
@@ -958,91 +959,72 @@ const BG_MELODY = [
   [392,0.11],[440,0.11],[494,0.11],[440,0.11],[392,0.11],[330,0.11],
   [349,0.11],[330,0.11],[294,0.11],[262,0.11],[262,0.44],[0,0.22],
 ];
-const BG_BASS = [131,147,165,131,147,165,175,147];
 
-// Module-level tick — accessible from onstatechange
-function _bgTick() {
-  if (!bgMusicRunning || !bgGainNode) { bgTickActive = false; return; }
-  const ctx = audioCtx;
-  if (!ctx || ctx.state !== 'running') { bgTickActive = false; return; }
-
-  bgTickActive = true;
-  if (_bgT < ctx.currentTime) _bgT = ctx.currentTime + 0.05;
-
-  while (_bgT < ctx.currentTime + 0.55) {
-    const [freq, dur] = BG_MELODY[_bgN % BG_MELODY.length];
-
+// Pre-render melody into a PCM AudioBuffer so we can use AudioBufferSourceNode.
+// AudioBufferSourceNode + loop=true is the MOST reliable looping audio on mobile —
+// no scheduler, no setTimeout, auto-pauses/resumes with AudioContext state.
+function _buildMusicBuffer(ctx) {
+  const sr  = ctx.sampleRate;
+  const dur = BG_MELODY.reduce((s,[,d])=>s+d, 0);
+  const buf = ctx.createBuffer(1, Math.ceil(sr * dur), sr);
+  const ch  = buf.getChannelData(0);
+  let t = 0;
+  for (const [freq, noteDur] of BG_MELODY) {
     if (freq > 0) {
-      const osc = ctx.createOscillator(), env = ctx.createGain();
-      osc.type = 'square'; osc.frequency.value = freq;
-      osc.detune.value = (Math.random()-0.5)*6;
-      env.gain.setValueAtTime(0.45, _bgT);
-      env.gain.setValueAtTime(0.45, _bgT + dur*0.75);
-      env.gain.linearRampToValueAtTime(0, _bgT + dur*0.96);
-      osc.connect(env); env.connect(bgGainNode);
-      osc.start(_bgT); osc.stop(_bgT + dur);
+      const s0 = Math.floor(t * sr);
+      const sN = Math.min(Math.floor((t + noteDur) * sr), ch.length);
+      const nNote = sN - s0;
+      for (let i = 0; i < nNote; i++) {
+        const phase = (i / sr) * freq * 2 * Math.PI;
+        // square wave mixed with sine, short attack + decay envelope
+        const env = Math.min(i / (sr * 0.012), 1) * Math.exp(-4 * i / (nNote));
+        const sq  = Math.sign(Math.sin(phase));
+        ch[s0 + i] += (sq * 0.55 + Math.sin(phase) * 0.45) * env * 0.22;
+        // bass one octave down
+        ch[s0 + i] += Math.sin((i / sr) * (freq / 2) * 2 * Math.PI) * env * 0.07;
+      }
     }
-
-    if (_bgBeat % 4 === 0) {
-      const bf = BG_BASS[_bgB % BG_BASS.length]; _bgB++;
-      const bo = ctx.createOscillator(), be = ctx.createGain();
-      bo.type = 'triangle'; bo.frequency.value = bf;
-      be.gain.setValueAtTime(0.9, _bgT);
-      be.gain.exponentialRampToValueAtTime(0.001, _bgT + 0.38);
-      bo.connect(be); be.connect(bgGainNode);
-      bo.start(_bgT); bo.stop(_bgT + 0.38);
-    }
-
-    if (_bgBeat % 8 === 4) {
-      const sLen = 0.055;
-      const sBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate*sLen), ctx.sampleRate);
-      const sD = sBuf.getChannelData(0);
-      for (let i=0;i<sD.length;i++) sD[i]=(Math.random()*2-1)*(1-i/sD.length);
-      const sSrc = ctx.createBufferSource(); sSrc.buffer = sBuf;
-      const sFlt = ctx.createBiquadFilter();
-      sFlt.type='bandpass'; sFlt.frequency.value=2200; sFlt.Q.value=0.9;
-      const sEnv = ctx.createGain(); sEnv.gain.setValueAtTime(0.28, _bgT);
-      sSrc.connect(sFlt); sFlt.connect(sEnv); sEnv.connect(bgGainNode);
-      sSrc.start(_bgT);
-    }
-
-    _bgT += dur; _bgN++; _bgBeat++;
+    t += noteDur;
   }
-  setTimeout(_bgTick, 90);
+  // Soft normalize
+  let peak = 0;
+  for (let i = 0; i < ch.length; i++) peak = Math.max(peak, Math.abs(ch[i]));
+  if (peak > 0.75) { const s = 0.75/peak; for (let i=0;i<ch.length;i++) ch[i]*=s; }
+  return buf;
 }
 
 function startBgMusic() {
   if (bgMusicRunning) return;
   bgMusicRunning = true;
-  bgTickActive   = false;
-  _bgT = 0; _bgN = 0; _bgB = 0; _bgBeat = 0;
 
   const ctx = getAudioCtx();
+
+  // Build buffer once and cache it
+  if (!_bgBuffer) _bgBuffer = _buildMusicBuffer(ctx);
+
   bgGainNode = ctx.createGain();
-  bgGainNode.gain.value = 0.07;
+  bgGainNode.gain.value = 0.18;   // slightly louder for mobile speakers
   bgGainNode.connect(ctx.destination);
 
-  // KEY FIX: onstatechange restarts _bgTick the INSTANT context becomes 'running'
-  // This fires whether resume() was called from user gesture or auto-resumed by browser
-  ctx.onstatechange = () => {
-    if (ctx.state === 'running' && bgMusicRunning && !bgTickActive) {
-      _bgTick();
-    }
+  const play = () => {
+    if (!bgMusicRunning) return;
+    bgSourceNode = ctx.createBufferSource();
+    bgSourceNode.buffer = _bgBuffer;
+    bgSourceNode.loop   = true;   // looping handled by Web Audio, no scheduler needed
+    bgSourceNode.connect(bgGainNode);
+    bgSourceNode.start(0);
   };
 
-  if (ctx.state === 'running') _bgTick();
-  else ctx.resume().catch(() => {});
+  // Ensure context is running before starting — works on iOS & Chrome Android
+  if (ctx.state === 'running') play();
+  else ctx.resume().then(play).catch(() => {});
 }
 
 function stopBgMusic() {
   bgMusicRunning = false;
-  bgTickActive   = false;
-  if (audioCtx) audioCtx.onstatechange = null;  // remove listener
-  if (bgGainNode) {
-    try { bgGainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.5); }
-    catch(e) {}
-    bgGainNode = null;
-  }
+  try { bgSourceNode && bgSourceNode.stop(); } catch(e) {}
+  bgSourceNode = null;
+  bgGainNode   = null;
 }
 
 // ════════════════════════════════════════════════════════
