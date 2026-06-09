@@ -944,9 +944,8 @@ function speakReaction(text) {
 //  BACKGROUND MUSIC  (Yakety Sax / Benny Hill bựa style)
 // ════════════════════════════════════════════════════════
 let bgMusicRunning = false;
-let bgSourceNode   = null;
-let bgGainNode     = null;
-let _bgBuffer      = null;   // pre-generated AudioBuffer (generated once, reused)
+let bgAudio        = null;   // <audio> element — more stable than Web Audio on Chrome Android
+let _bgWavUrl      = null;   // cached blob URL
 
 // ── Melody note table ──
 const BG_MELODY = [
@@ -960,71 +959,67 @@ const BG_MELODY = [
   [349,0.11],[330,0.11],[294,0.11],[262,0.11],[262,0.44],[0,0.22],
 ];
 
-// Pre-render melody into a PCM AudioBuffer so we can use AudioBufferSourceNode.
-// AudioBufferSourceNode + loop=true is the MOST reliable looping audio on mobile —
-// no scheduler, no setTimeout, auto-pauses/resumes with AudioContext state.
-function _buildMusicBuffer(ctx) {
-  const sr  = ctx.sampleRate;
-  const dur = BG_MELODY.reduce((s,[,d])=>s+d, 0);
-  const buf = ctx.createBuffer(1, Math.ceil(sr * dur), sr);
-  const ch  = buf.getChannelData(0);
+// Render melody to PCM Float32Array (no AudioContext needed)
+function _buildPCM(sr) {
+  const dur  = BG_MELODY.reduce((s,[,d])=>s+d, 0);
+  const n    = Math.ceil(sr * dur);
+  const ch   = new Float32Array(n);
   let t = 0;
   for (const [freq, noteDur] of BG_MELODY) {
     if (freq > 0) {
       const s0 = Math.floor(t * sr);
-      const sN = Math.min(Math.floor((t + noteDur) * sr), ch.length);
-      const nNote = sN - s0;
-      for (let i = 0; i < nNote; i++) {
-        const phase = (i / sr) * freq * 2 * Math.PI;
-        // square wave mixed with sine, short attack + decay envelope
-        const env = Math.min(i / (sr * 0.012), 1) * Math.exp(-4 * i / (nNote));
-        const sq  = Math.sign(Math.sin(phase));
-        ch[s0 + i] += (sq * 0.55 + Math.sin(phase) * 0.45) * env * 0.22;
-        // bass one octave down
-        ch[s0 + i] += Math.sin((i / sr) * (freq / 2) * 2 * Math.PI) * env * 0.07;
+      const sN = Math.min(Math.floor((t + noteDur) * sr), n);
+      const nn = sN - s0;
+      for (let i = 0; i < nn; i++) {
+        const env = Math.min(i / (sr * 0.012), 1) * Math.exp(-4 * i / nn);
+        const ph  = (i / sr) * freq * 2 * Math.PI;
+        ch[s0+i] += (Math.sign(Math.sin(ph)) * 0.55 + Math.sin(ph) * 0.45) * env * 0.22;
+        ch[s0+i] += Math.sin((i/sr)*(freq/2)*2*Math.PI) * env * 0.06; // bass
       }
     }
     t += noteDur;
   }
-  // Soft normalize
-  let peak = 0;
-  for (let i = 0; i < ch.length; i++) peak = Math.max(peak, Math.abs(ch[i]));
-  if (peak > 0.75) { const s = 0.75/peak; for (let i=0;i<ch.length;i++) ch[i]*=s; }
-  return buf;
+  // normalize
+  let pk = 0; for (let i=0;i<n;i++) pk = Math.max(pk, Math.abs(ch[i]));
+  if (pk > 0.72) { const s=0.72/pk; for (let i=0;i<n;i++) ch[i]*=s; }
+  return { ch, sr, n };
+}
+
+// Encode Float32 PCM → WAV Blob URL
+function _pcmToWavUrl({ ch, sr, n }) {
+  const pcm = new Int16Array(n);
+  for (let i=0;i<n;i++) pcm[i] = Math.max(-32768, Math.min(32767, ch[i]*32767));
+  const hdr = new ArrayBuffer(44);
+  const v   = new DataView(hdr);
+  const set = (o,val,le,bytes) => bytes===4 ? v.setUint32(o,val,le) : v.setUint16(o,val,le);
+  const enc = (o,s) => { for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+  enc(0,'RIFF'); set(4,36+pcm.byteLength,true,4); enc(8,'WAVE');
+  enc(12,'fmt '); set(16,16,true,4); set(20,1,true,2); set(22,1,true,2);
+  set(24,sr,true,4); set(28,sr*2,true,4); set(32,2,true,2); set(34,16,true,2);
+  enc(36,'data'); set(40,pcm.byteLength,true,4);
+  return URL.createObjectURL(new Blob([hdr, pcm.buffer], { type:'audio/wav' }));
 }
 
 function startBgMusic() {
   if (bgMusicRunning) return;
   bgMusicRunning = true;
 
-  const ctx = getAudioCtx();
+  // Generate WAV once and cache as blob URL
+  if (!_bgWavUrl) _bgWavUrl = _pcmToWavUrl(_buildPCM(22050));
 
-  // Build buffer once and cache it
-  if (!_bgBuffer) _bgBuffer = _buildMusicBuffer(ctx);
-
-  bgGainNode = ctx.createGain();
-  bgGainNode.gain.value = 0.18;   // slightly louder for mobile speakers
-  bgGainNode.connect(ctx.destination);
-
-  const play = () => {
-    if (!bgMusicRunning) return;
-    bgSourceNode = ctx.createBufferSource();
-    bgSourceNode.buffer = _bgBuffer;
-    bgSourceNode.loop   = true;   // looping handled by Web Audio, no scheduler needed
-    bgSourceNode.connect(bgGainNode);
-    bgSourceNode.start(0);
-  };
-
-  // Ensure context is running before starting — works on iOS & Chrome Android
-  if (ctx.state === 'running') play();
-  else ctx.resume().then(play).catch(() => {});
+  if (!bgAudio) {
+    bgAudio = new Audio(_bgWavUrl);
+    bgAudio.loop   = true;
+    bgAudio.volume = 0.38;  // audible on phone speakers
+  }
+  bgAudio.currentTime = 0;
+  // play() returns Promise — handle rejection silently (autoplay policy)
+  bgAudio.play().catch(() => {});
 }
 
 function stopBgMusic() {
   bgMusicRunning = false;
-  try { bgSourceNode && bgSourceNode.stop(); } catch(e) {}
-  bgSourceNode = null;
-  bgGainNode   = null;
+  if (bgAudio) { bgAudio.pause(); bgAudio.currentTime = 0; }
 }
 
 // ════════════════════════════════════════════════════════
@@ -1095,13 +1090,25 @@ function startGame() {
   gameoverOverlay.style.display = 'none';
   slots.forEach(s => s.wrap.classList.remove('visible','hit-anim'));
 
-  // ── Unlock audio for iOS (must happen inside direct user gesture) ──
+  // ── Unlock Web Audio (for hit sounds) ──
   getAudioCtx().resume();
-  // Unlock speech synthesis with a silent dummy utterance
+
+  // ── Unlock <audio> element for background music ──
+  // Must call play() inside direct user gesture so Chrome Android allows it
+  if (!_bgWavUrl) _bgWavUrl = _pcmToWavUrl(_buildPCM(22050));
+  if (!bgAudio) {
+    bgAudio = new Audio(_bgWavUrl);
+    bgAudio.loop   = true;
+    bgAudio.volume = 0.38;
+  }
+  // Unlock by playing briefly (will be reset by startBgMusic)
+  bgAudio.play().catch(() => {});
+
+  // ── Unlock speech synthesis ──
   if (window.speechSynthesis) {
     speechSynthesis.cancel();
-    const unlock = new SpeechSynthesisUtterance('');
-    unlock.volume = 0;
+    const unlock = new SpeechSynthesisUtterance(' ');
+    unlock.volume = 0.01;
     speechSynthesis.speak(unlock);
   }
 
@@ -1133,10 +1140,11 @@ function getRank(s) {
 document.getElementById('start-btn').addEventListener('click', startGame);
 document.getElementById('restart-btn').addEventListener('click', startGame);
 
-// Resume AudioContext whenever user returns to tab or touches screen
-// (Chrome mobile suspends ctx on notification, screen dim, app switch, etc.)
+// Resume audio whenever user returns to tab or touches screen
 function _resumeAudio() {
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  // If bgAudio was paused by OS/browser, restart it
+  if (bgAudio && bgMusicRunning && bgAudio.paused) bgAudio.play().catch(() => {});
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) _resumeAudio(); });
 document.addEventListener('touchstart',       _resumeAudio, { passive: true });
