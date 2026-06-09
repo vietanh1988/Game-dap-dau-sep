@@ -964,22 +964,30 @@ const BG_BASS = [131,147,165,131, 147,165,175,147];
 function startBgMusic() {
   if (bgMusicRunning) return;
   bgMusicRunning = true;
+
   const ctx = getAudioCtx();
   bgGainNode = ctx.createGain();
-  bgGainNode.gain.value = 0.07;   // quiet background
+  bgGainNode.gain.value = 0.07;
   bgGainNode.connect(ctx.destination);
 
-  let nextTime  = ctx.currentTime + 0.05;
-  let noteIdx   = 0;
-  let bassIdx   = 0;
-  let beatTick  = 0;
+  // ── Inner scheduler (runs only when ctx is 'running') ──
+  let nextTime = 0, noteIdx = 0, bassIdx = 0, beatTick = 0;
 
-  function schedule() {
+  function runSchedule() {
     if (!bgMusicRunning) return;
+
+    // If iOS suspended the context again, resume and retry
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(() => setTimeout(runSchedule, 150)).catch(() => {});
+      return;
+    }
+
+    // On first run, anchor nextTime to now
+    if (nextTime < ctx.currentTime) nextTime = ctx.currentTime + 0.05;
+
     while (nextTime < ctx.currentTime + 0.55) {
       const [freq, dur] = BG_MELODY[noteIdx % BG_MELODY.length];
 
-      // ── Melody (square wave – retro chiptune) ──
       if (freq > 0) {
         const osc = ctx.createOscillator();
         const env = ctx.createGain();
@@ -993,7 +1001,6 @@ function startBgMusic() {
         osc.start(nextTime); osc.stop(nextTime + dur);
       }
 
-      // ── Bass (triangle, every 4 notes) ──
       if (beatTick % 4 === 0) {
         const bf = BG_BASS[bassIdx % BG_BASS.length];
         bassIdx++;
@@ -1006,7 +1013,6 @@ function startBgMusic() {
         bo.start(nextTime); bo.stop(nextTime + 0.38);
       }
 
-      // ── Snare click on off-beats ──
       if (beatTick % 8 === 4) {
         const sLen = 0.055;
         const sBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate*sLen), ctx.sampleRate);
@@ -1026,9 +1032,13 @@ function startBgMusic() {
       noteIdx++;
       beatTick++;
     }
-    setTimeout(schedule, 90);
+    setTimeout(runSchedule, 90);
   }
-  schedule();
+
+  // Wait for ctx.resume() to finish before starting the loop
+  const kick = () => { if (bgMusicRunning) runSchedule(); };
+  if (ctx.state === 'running') kick();
+  else ctx.resume().then(kick).catch(() => {});
 }
 
 function stopBgMusic() {
