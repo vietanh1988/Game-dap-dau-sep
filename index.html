@@ -867,8 +867,14 @@ function showScorePop(cx, cy, text) {
 //  AUDIO
 // ════════════════════════════════════════════════════════
 let audioCtx = null;
+
+// iOS: AudioContext must be created + resumed inside a user gesture.
+// We create it lazily on first startGame() call (button tap = gesture).
 function getAudioCtx() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  // Always try to resume — iOS suspends context automatically
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
 }
@@ -876,52 +882,62 @@ function getAudioCtx() {
 function playHitSound() {
   try {
     const ctx = getAudioCtx();
-    const now = ctx.currentTime;
+    // Wait until context is running before scheduling
+    const play = () => {
+      const now = ctx.currentTime;
+      const thud = ctx.createOscillator();
+      const thudGain = ctx.createGain();
+      thud.type = 'sine';
+      thud.frequency.setValueAtTime(180, now);
+      thud.frequency.exponentialRampToValueAtTime(40, now + 0.12);
+      thudGain.gain.setValueAtTime(1.0, now);
+      thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      thud.connect(thudGain); thudGain.connect(ctx.destination);
+      thud.start(now); thud.stop(now + 0.18);
 
-    // Low THWACK thud
-    const thud = ctx.createOscillator();
-    const thudGain = ctx.createGain();
-    thud.type = 'sine';
-    thud.frequency.setValueAtTime(180, now);
-    thud.frequency.exponentialRampToValueAtTime(40, now + 0.12);
-    thudGain.gain.setValueAtTime(1.0, now);
-    thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-    thud.connect(thudGain); thudGain.connect(ctx.destination);
-    thud.start(now); thud.stop(now + 0.18);
-
-    // Crack snap (short noise burst)
-    const dur = 0.06;
-    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++)
-      data[i] = (Math.random()*2-1) * Math.pow(1 - i/data.length, 3);
-    const crack = ctx.createBufferSource();
-    crack.buffer = buf;
-    const crackFilter = ctx.createBiquadFilter();
-    crackFilter.type = 'highpass'; crackFilter.frequency.value = 1200;
-    const crackGain = ctx.createGain();
-    crackGain.gain.setValueAtTime(0.6, now);
-    crack.connect(crackFilter); crackFilter.connect(crackGain); crackGain.connect(ctx.destination);
-    crack.start(now);
+      const dur = 0.06;
+      const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++)
+        data[i] = (Math.random()*2-1) * Math.pow(1 - i/data.length, 3);
+      const crack = ctx.createBufferSource();
+      crack.buffer = buf;
+      const crackFilter = ctx.createBiquadFilter();
+      crackFilter.type = 'highpass'; crackFilter.frequency.value = 1200;
+      const crackGain = ctx.createGain();
+      crackGain.gain.setValueAtTime(0.6, now);
+      crack.connect(crackFilter); crackFilter.connect(crackGain); crackGain.connect(ctx.destination);
+      crack.start(now);
+    };
+    if (ctx.state === 'running') play();
+    else ctx.resume().then(play).catch(() => {});
   } catch(e) {}
 }
 
-// Speak the reaction text using Vietnamese TTS
+// ── Pre-cache Vietnamese voice (loads async on mobile) ──
+let _cachedVoice = null;
+function _loadVoices() {
+  if (!window.speechSynthesis) return;
+  const vs = speechSynthesis.getVoices();
+  _cachedVoice = vs.find(v => v.lang && v.lang.startsWith('vi')) || null;
+}
+if (window.speechSynthesis) {
+  _loadVoices();
+  speechSynthesis.addEventListener('voiceschanged', _loadVoices);
+}
+
 function speakReaction(text) {
   if (!window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  // Strip emoji for cleaner pronunciation
-  const clean = text.replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim();
-  const utt = new SpeechSynthesisUtterance(clean);
-  utt.lang = 'vi-VN';
-  utt.rate = 0.88;   // chậm hơn, nghe nặng nề hơn
-  utt.pitch = 0.6;   // trầm, giọng ông sếp to con
-  utt.volume = 1.0;
-  // Try Vietnamese voice; fall back to any available
-  const voices = window.speechSynthesis.getVoices();
-  const viVoice = voices.find(v => v.lang.startsWith('vi'));
-  if (viVoice) utt.voice = viVoice;
-  window.speechSynthesis.speak(utt);
+  speechSynthesis.cancel();
+  // Simple strip: remove non-Latin/Vietnamese/punctuation chars (no \u{} flag for old mobile)
+  const clean = text.replace(/[^\w\sàáâãèéêìíòóôõùúýăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỷỹ!?.,]/gi, '').trim();
+  const utt = new SpeechSynthesisUtterance(clean || text);
+  utt.lang    = 'vi-VN';
+  utt.rate    = 0.88;
+  utt.pitch   = 0.6;
+  utt.volume  = 1.0;
+  if (_cachedVoice) utt.voice = _cachedVoice;
+  speechSynthesis.speak(utt);
 }
 
 // ════════════════════════════════════════════════════════
@@ -1093,6 +1109,17 @@ function startGame() {
   startOverlay.style.display = 'none';
   gameoverOverlay.style.display = 'none';
   slots.forEach(s => s.wrap.classList.remove('visible','hit-anim'));
+
+  // ── Unlock audio for iOS (must happen inside direct user gesture) ──
+  getAudioCtx().resume();
+  // Unlock speech synthesis with a silent dummy utterance
+  if (window.speechSynthesis) {
+    speechSynthesis.cancel();
+    const unlock = new SpeechSynthesisUtterance('');
+    unlock.volume = 0;
+    speechSynthesis.speak(unlock);
+  }
+
   startBgMusic();
   countdownTimer = setTimeout(tick, 1000);
   scheduleSpawn();
