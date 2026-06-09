@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚾ Đập Đầu Sếp – Office Hit</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #1a1a2e;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    cursor: none;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ── Durian cursor ── */
+  #cursor {
+    position: fixed;
+    width: 80px; height: 90px;
+    pointer-events: none;
+    z-index: 9999;
+    transform-origin: 40px 84px;   /* pivot at wrist bottom */
+    transform: translate(-40px, -84px) rotate(0deg);
+    transition: transform 0.07s ease-out;
+    filter: drop-shadow(0 0 7px rgba(80,160,0,0.55));
+  }
+  #cursor.swing {
+    transform: translate(-40px, -84px) rotate(-70deg);
+    transition: transform 0.09s cubic-bezier(.15,1.8,.4,1);
+    filter: drop-shadow(0 0 16px rgba(120,200,0,0.95));
+  }
+
+  /* hit-freeze: boss shakes but stays visible */
+  .boss-wrap.hit-freeze { animation: hit-shake 0.35s ease-out forwards; }
+  @keyframes hit-shake {
+    0%   { transform: translateY(0) rotate(0deg)   scale(1); }
+    18%  { transform: translateY(-14px) rotate(-14deg) scale(1.18); }
+    40%  { transform: translateY(4px)  rotate(10deg)  scale(1.05); }
+    62%  { transform: translateY(-6px) rotate(-6deg)  scale(1.10); }
+    80%  { transform: translateY(2px)  rotate(3deg)   scale(1.04); }
+    100% { transform: translateY(0)    rotate(0deg)   scale(1); }
+  }
+
+  /* ── Header ── */
+  #header {
+    width: 100%; max-width: 780px;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 20px 6px; color: #fff;
+  }
+  .stat-box {
+    background: rgba(255,255,255,0.1);
+    border: 2px solid rgba(255,255,255,0.25);
+    border-radius: 12px; padding: 8px 18px;
+    text-align: center; min-width: 100px;
+  }
+  .stat-label { font-size: 11px; letter-spacing: 1px; opacity: .7; text-transform: uppercase; }
+  .stat-value { font-size: 28px; font-weight: 700; color: #ffd700; line-height: 1.1; }
+  #title-text {
+    font-size: 20px; font-weight: 800;
+    background: linear-gradient(90deg,#ff6b6b,#ffd700,#6bcbff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    text-align: center;
+  }
+  #timer-box .stat-value { color: #ff6b6b; }
+
+  /* ── Timer bar ── */
+  #timer-bar-wrap { width: 100%; max-width: 780px; padding: 0 20px 10px; }
+  #timer-bar-bg { width: 100%; height: 8px; background: rgba(255,255,255,0.15); border-radius: 4px; overflow: hidden; }
+  #timer-bar { height: 100%; background: linear-gradient(90deg,#ff6b6b,#ffd700); border-radius: 4px; transition: width .5s linear; width: 100%; }
+
+  /* ── Game area ── */
+  #game-area {
+    position: relative; width: 780px; height: 510px;
+    border-radius: 18px; overflow: hidden;
+    border: 3px solid rgba(255,255,255,0.3);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    margin: 6px auto;
+    background: linear-gradient(180deg, #e8f4f8 0%, #d0e8f5 25%, #c4d8b0 60%, #a8c890 100%);
+  }
+
+  /* floor */
+  .floor {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 82px;
+    background: linear-gradient(180deg, #8aab6e, #6b8c50);
+    border-top: 4px solid #5a7a42;
+  }
+  .deco { position: absolute; pointer-events: none; font-size: 28px; }
+
+  /* ── Boss slot (no partitions — heads pop from floor) ── */
+  .boss-slot {
+    position: absolute; bottom: 82px; /* sits flush at floor top */
+    width: 164px; height: 172px;
+    display: flex; justify-content: center; align-items: flex-end;
+    z-index: 20; overflow: hidden;
+  }
+  .boss-wrap {
+    position: relative;
+    width: 164px; height: 164px;
+    display: flex; flex-direction: column; align-items: center;
+    cursor: none;
+    transform: translateY(168px);
+    transition: transform 0.22s cubic-bezier(.34,1.4,.64,1);
+    will-change: transform;
+  }
+  .boss-wrap.visible { transform: translateY(0); }
+  .boss-wrap.hit-anim { animation: boss-hit 0.42s ease-out forwards; }
+
+  @keyframes boss-hit {
+    0%   { transform: translateY(0)    rotate(0deg)   scale(1); }
+    15%  { transform: translateY(-18px) rotate(-18deg) scale(1.2); }
+    55%  { transform: translateY(8px)  rotate(12deg)  scale(0.85); }
+    100% { transform: translateY(168px) rotate(0deg)  scale(1); }
+  }
+
+  .boss-svg { width: 158px; height: 158px; display: block; }
+
+  /* ground-shadow under each boss slot */
+  .ground-shadow {
+    position: absolute; bottom: 84px;
+    width: 130px; height: 18px;
+    background: rgba(0,0,0,0.22);
+    border-radius: 50%;
+    z-index: 18; pointer-events: none;
+  }
+
+  /* ── Reaction bubble ── */
+  .reaction-bubble {
+    position: absolute;
+    top: -52px; left: 50%;
+    transform: translateX(-50%) scale(0);
+    background: #fffde7;
+    border: 2.5px solid #c62828;
+    border-radius: 14px;
+    padding: 6px 13px;
+    font-size: 13px;
+    font-weight: 800;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 99;
+    animation: pop-bubble 0.9s ease-out forwards;
+    box-shadow: 2px 2px 6px rgba(0,0,0,0.25);
+  }
+  .reaction-bubble::after {
+    content: ''; position: absolute;
+    bottom: -10px; left: 50%; transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #333;
+  }
+  @keyframes pop-bubble {
+    0%   { transform: translateX(-50%) scale(0) rotate(-8deg); opacity: 1; }
+    20%  { transform: translateX(-50%) scale(1.2) rotate(4deg); }
+    40%  { transform: translateX(-50%) scale(0.95) rotate(0deg); }
+    70%  { transform: translateX(-50%) scale(1) rotate(0deg); opacity: 1; }
+    100% { transform: translateX(-50%) scale(0.8) rotate(0deg) translateY(-20px); opacity: 0; }
+  }
+
+  /* ── Score popup ── */
+  .score-pop {
+    position: absolute;
+    font-size: 22px; font-weight: 800;
+    color: #ffd700; text-shadow: 0 2px 4px rgba(0,0,0,.5);
+    pointer-events: none; z-index: 100;
+    animation: score-float 0.9s ease-out forwards;
+  }
+  @keyframes score-float {
+    0%   { opacity: 1; transform: translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateY(-70px) scale(1.3); }
+  }
+
+  /* ── Combo ── */
+  #combo-display {
+    position: absolute; top: 14px; right: 16px;
+    font-size: 15px; font-weight: 800; color: #ff6b6b;
+    text-shadow: 0 0 10px rgba(255,107,107,.8);
+    opacity: 0; transition: opacity .3s; z-index: 50; letter-spacing: 2px;
+  }
+  #combo-display.active { opacity: 1; }
+
+  /* ── Overlays ── */
+  .overlay {
+    position: absolute; inset: 0;
+    background: rgba(10,10,30,0.9);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 200; border-radius: 16px;
+    backdrop-filter: blur(4px);
+  }
+  .overlay h2 {
+    font-size: 36px; font-weight: 900;
+    background: linear-gradient(90deg,#ff6b6b,#ffd700);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin-bottom: 10px;
+  }
+  .overlay p { color: #ccc; font-size: 15px; margin-bottom: 6px; }
+  .overlay .big-score {
+    font-size: 68px; font-weight: 900; color: #ffd700;
+    text-shadow: 0 0 24px rgba(255,215,0,.6);
+    line-height: 1; margin: 12px 0;
+  }
+  .btn {
+    margin-top: 18px; padding: 13px 36px;
+    font-size: 17px; font-weight: 700;
+    border: none; border-radius: 50px;
+    background: linear-gradient(90deg,#ff6b6b,#ff9f43);
+    color: white; cursor: pointer;
+    box-shadow: 0 6px 24px rgba(255,107,107,.5);
+    transition: transform .15s, box-shadow .15s; letter-spacing: 1px;
+  }
+  .btn:hover { transform: translateY(-3px); box-shadow: 0 10px 30px rgba(255,107,107,.7); }
+  .btn:active { transform: translateY(1px); }
+
+  /* upload */
+  #upload-area { margin-top: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  #upload-area label {
+    padding: 9px 22px; border: 2px dashed rgba(255,255,255,.4);
+    border-radius: 10px; color: #aaa; font-size: 13px; cursor: pointer;
+    transition: border-color .2s, color .2s;
+  }
+  #upload-area label:hover { border-color: #ffd700; color: #ffd700; }
+  #upload-area input { display: none; }
+  #preview-img { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 3px solid #ffd700; display: none; }
+</style>
+</head>
+<body>
+
+<!-- ══ DURIAN CURSOR ══ -->
+<div id="cursor">
+<svg width="80" height="90" viewBox="0 0 80 90" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="dg" cx="38%" cy="35%" r="65%">
+      <stop offset="0%"   stop-color="#d4c428"/>
+      <stop offset="45%"  stop-color="#9a8e18"/>
+      <stop offset="100%" stop-color="#5c5808"/>
+    </radialGradient>
+    <radialGradient id="hg" cx="40%" cy="28%" r="70%">
+      <stop offset="0%"   stop-color="#f2cc92"/>
+      <stop offset="100%" stop-color="#c08850"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ══ DURIAN BODY ══ -->
+  <ellipse cx="40" cy="30" rx="22" ry="19" fill="url(#dg)" stroke="#3e3a04" stroke-width="1.2"/>
+
+  <!-- Texture segment lines -->
+  <path d="M40 11 Q30 20 32 30 Q36 40 40 48" fill="none" stroke="#3a3600" stroke-width="1" opacity=".45"/>
+  <path d="M40 11 Q50 20 48 30 Q44 40 40 48" fill="none" stroke="#3a3600" stroke-width="1" opacity=".45"/>
+  <path d="M18 26 Q29 19 40 21 Q51 19 62 26" fill="none" stroke="#3a3600" stroke-width=".8" opacity=".4"/>
+  <path d="M20 36 Q30 41 40 41 Q50 41 60 36" fill="none" stroke="#3a3600" stroke-width=".8" opacity=".4"/>
+
+  <!-- ══ SPIKES (sharp triangles all around) ══ -->
+  <!-- top center -->
+  <polygon points="40,2 36,13 44,13"   fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- top-left -->
+  <polygon points="24,7 19,18 28,17"   fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- top-right -->
+  <polygon points="56,7 61,18 52,17"   fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- upper-left diagonal -->
+  <polygon points="14,17 6,10 10,20"   fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- upper-right diagonal -->
+  <polygon points="66,17 74,10 70,20"  fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- left side -->
+  <polygon points="17,30 6,27 8,35"    fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- right side -->
+  <polygon points="63,30 74,27 72,35"  fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- lower-left diagonal -->
+  <polygon points="19,41 10,44 14,50"  fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- lower-right diagonal -->
+  <polygon points="61,41 70,44 66,50"  fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- bottom-left -->
+  <polygon points="28,46 22,56 31,54"  fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- bottom-right -->
+  <polygon points="52,46 58,56 49,54"  fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+  <!-- bottom center -->
+  <polygon points="40,48 36,58 44,58"  fill="#2e2c02" stroke="#1a1800" stroke-width=".5"/>
+
+  <!-- Spike highlight on some tips (slight shine) -->
+  <line x1="40" y1="3"  x2="40" y2="7"  stroke="#eecc00" stroke-width=".8" opacity=".5"/>
+  <line x1="14" y1="17" x2="10" y2="13" stroke="#eecc00" stroke-width=".8" opacity=".4"/>
+  <line x1="66" y1="17" x2="70" y2="13" stroke="#eecc00" stroke-width=".8" opacity=".4"/>
+
+  <!-- Stem -->
+  <rect x="37" y="2" width="6" height="9" rx="3" fill="#6a4010"/>
+  <ellipse cx="40" cy="2" rx="5" ry="3" fill="#886020"/>
+
+  <!-- ══ HAND / FIST ══ -->
+  <!-- wrist base -->
+  <rect x="28" y="72" width="24" height="14" rx="5" fill="#cc9458" stroke="#a07438" stroke-width="1"/>
+  <line x1="30" y1="77" x2="50" y2="77" stroke="#a07438" stroke-width=".7" opacity=".5"/>
+  <line x1="30" y1="81" x2="50" y2="81" stroke="#a07438" stroke-width=".7" opacity=".5"/>
+
+  <!-- fist main body -->
+  <rect x="26" y="50" width="28" height="26" rx="8" fill="url(#hg)" stroke="#b07840" stroke-width="1.2"/>
+
+  <!-- 4 knuckles on top -->
+  <ellipse cx="31"   cy="51" rx="4"   ry="3"   fill="#e8b878"/>
+  <ellipse cx="37.5" cy="50" rx="4"   ry="3"   fill="#e8b878"/>
+  <ellipse cx="44"   cy="50" rx="4"   ry="3"   fill="#e8b878"/>
+  <ellipse cx="50"   cy="51" rx="3.5" ry="2.5" fill="#e8b878"/>
+
+  <!-- finger crease lines -->
+  <line x1="34" y1="52" x2="34" y2="74" stroke="#b07840" stroke-width=".8" opacity=".4"/>
+  <line x1="41" y1="52" x2="41" y2="74" stroke="#b07840" stroke-width=".8" opacity=".4"/>
+  <line x1="48" y1="52" x2="48" y2="74" stroke="#b07840" stroke-width=".8" opacity=".4"/>
+
+  <!-- thumb on left -->
+  <ellipse cx="23" cy="60" rx="6" ry="10" fill="#f2cc92" stroke="#b07840" stroke-width="1.2"/>
+  <ellipse cx="22" cy="54" rx="4" ry="2.5" fill="#e8b878"/>
+  <line x1="18" y1="60" x2="28" y2="60" stroke="#b07840" stroke-width=".7" opacity=".4"/>
+</svg>
+</div>
+
+<!-- ══ HEADER ══ -->
+<div id="header">
+  <div class="stat-box">
+    <div class="stat-label">Điểm</div>
+    <div class="stat-value" id="score-display">0</div>
+  </div>
+  <div>
+    <div id="title-text">⚾ Đập Đầu Sếp<br>Office Hit</div>
+  </div>
+  <div class="stat-box" id="timer-box">
+    <div class="stat-label">Thời gian</div>
+    <div class="stat-value" id="timer-display">60</div>
+  </div>
+</div>
+
+<!-- timer bar -->
+<div id="timer-bar-wrap">
+  <div id="timer-bar-bg"><div id="timer-bar"></div></div>
+</div>
+
+<!-- ══ GAME AREA ══ -->
+<div id="game-area">
+
+  <!-- decorations -->
+  <div class="deco" style="left:8px;top:18px;font-size:20px">📊</div>
+  <div class="deco" style="left:700px;top:18px;font-size:20px">🕐</div>
+  <div class="deco" style="left:195px;top:24px;font-size:17px">📋</div>
+  <div class="deco" style="left:375px;top:22px;font-size:17px">☕</div>
+  <div class="deco" style="left:555px;top:24px;font-size:17px">📂</div>
+
+  <!-- floor -->
+  <div class="floor"></div>
+
+  <!-- combo -->
+  <div id="combo-display">COMBO x<span id="combo-val">1</span></div>
+
+  <!-- START overlay -->
+  <div class="overlay" id="start-overlay">
+    <h2>⚾ Đập Đầu Sếp!</h2>
+    <p style="font-size:17px;color:#ffd700;margin:6px 0">Office Hit – phiên bản gậy bóng chày</p>
+    <p>Vụt gậy vào đầu sếp càng nhanh càng tốt!</p>
+    <p style="margin-top:6px;color:#aaa;font-size:13px">⏱ 60 giây &nbsp;|&nbsp; Sếp ngày càng nhanh hơn!</p>
+    <div id="upload-area">
+      <label for="face-upload">📷 Tải ảnh sếp thật (tuỳ chọn)</label>
+      <input type="file" id="face-upload" accept="image/*">
+      <img id="preview-img" alt="Ảnh sếp">
+    </div>
+    <button class="btn" id="start-btn" style="margin-top:20px">🚀 Bắt đầu!</button>
+  </div>
+
+  <!-- GAME OVER overlay -->
+  <div class="overlay" id="gameover-overlay" style="display:none">
+    <h2>⏰ Hết giờ rồi!</h2>
+    <p>Bạn đã đập được</p>
+    <div class="big-score" id="final-score">0</div>
+    <p>điểm 🎉</p>
+    <p id="rank-text" style="font-size:18px;color:#ffd700;margin-top:10px"></p>
+    <button class="btn" id="restart-btn">🔄 Chơi lại</button>
+  </div>
+
+</div><!-- end game-area -->
+
+<script>
+// ════════════════════════════════════════════════════════
+//  CONFIG
+// ════════════════════════════════════════════════════════
+const TOTAL_TIME    = 60;
+const NUM_HOLES     = 4;
+const BASE_SHOW_MS  = 2600;   // longer so player can hear curse
+const MIN_SHOW_MS   = 1200;
+const BASE_INTERVAL = 2000;   // slower spawns
+const MIN_INTERVAL  = 900;
+const JITTER        = 0.35;
+// 4 slots spread evenly across 780px (no partitions)
+const SLOTS_X       = [30, 210, 390, 570];
+
+// ════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════
+let score = 0, timeLeft = TOTAL_TIME, running = false;
+let combo = 0, comboTimer = null;
+let customFace = null;
+let spawnTimer = null, countdownTimer = null;
+let activeSlots = new Set();
+
+// ════════════════════════════════════════════════════════
+//  DOM refs
+// ════════════════════════════════════════════════════════
+const cursorEl       = document.getElementById('cursor');
+const gameArea       = document.getElementById('game-area');
+const scoreDisplay   = document.getElementById('score-display');
+const timerDisplay   = document.getElementById('timer-display');
+const timerBar       = document.getElementById('timer-bar');
+const startOverlay   = document.getElementById('start-overlay');
+const gameoverOverlay= document.getElementById('gameover-overlay');
+const finalScore     = document.getElementById('final-score');
+const rankText       = document.getElementById('rank-text');
+const combDisplay    = document.getElementById('combo-display');
+const comboVal       = document.getElementById('combo-val');
+
+// ════════════════════════════════════════════════════════
+//  BAT CURSOR
+// ════════════════════════════════════════════════════════
+document.addEventListener('mousemove', e => {
+  cursorEl.style.left = e.clientX + 'px';
+  cursorEl.style.top  = e.clientY + 'px';
+});
+document.addEventListener('mousedown', () => {
+  cursorEl.classList.add('swing');
+  setTimeout(() => cursorEl.classList.remove('swing'), 220);
+});
+
+// ════════════════════════════════════════════════════════
+//  FACE UPLOAD
+// ════════════════════════════════════════════════════════
+document.getElementById('face-upload').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    customFace = ev.target.result;
+    const prev = document.getElementById('preview-img');
+    prev.src = customFace; prev.style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+});
+
+// ════════════════════════════════════════════════════════
+//  SVG FACES
+// ════════════════════════════════════════════════════════
+
+// ── Shared base (head shape, hair, glasses, tie) ──
+function baseHead(skinTone = '#FFDAB9') {
+  return `
+  <ellipse cx="36" cy="40" rx="29" ry="31" fill="${skinTone}" stroke="#e0a070" stroke-width="1.5"/>
+  <ellipse cx="36" cy="12"  rx="29" ry="11" fill="#4a3728"/>
+  <rect x="7" y="10" width="58" height="12" fill="#4a3728"/>
+  <rect x="15" y="30" width="18" height="13" rx="5" fill="none" stroke="#333" stroke-width="2"/>
+  <rect x="39" y="30" width="18" height="13" rx="5" fill="none" stroke="#333" stroke-width="2"/>
+  <line x1="33" y1="36" x2="39" y2="36" stroke="#333" stroke-width="2"/>
+  <line x1="8"  y1="34" x2="15" y2="34" stroke="#333" stroke-width="1.5"/>
+  <line x1="57" y1="34" x2="63" y2="34" stroke="#333" stroke-width="1.5"/>`;
+}
+function baseTie() {
+  return `
+  <path d="M28 68 L36 82 L44 68 Q36 72 28 68Z" fill="#c0392b"/>
+  <rect x="30" y="66" width="12" height="6" fill="#e74c3c" rx="2"/>`;
+}
+
+// ── Normal idle expressions (3 variants) ──
+const IDLE_FACES = [
+  // serious
+  () => baseHead() + `
+    <ellipse cx="24" cy="36" rx="5" ry="5" fill="white"/>
+    <ellipse cx="48" cy="36" rx="5" ry="5" fill="white"/>
+    <circle  cx="25" cy="37" r="3" fill="#222"/>
+    <circle  cx="49" cy="37" r="3" fill="#222"/>
+    <ellipse cx="36" cy="47" rx="4" ry="3" fill="#e8c0a0"/>
+    <path d="M26 54 Q36 51 46 54" stroke="#555" stroke-width="2.5" fill="none" stroke-linecap="round"/>` + baseTie(),
+  // smug
+  () => baseHead() + `
+    <ellipse cx="24" cy="36" rx="5" ry="5" fill="white"/>
+    <ellipse cx="48" cy="36" rx="5" ry="5" fill="white"/>
+    <circle  cx="25" cy="36" r="3" fill="#222"/>
+    <circle  cx="49" cy="36" r="3" fill="#222"/>
+    <ellipse cx="36" cy="47" rx="4" ry="3" fill="#e8c0a0"/>
+    <path d="M26 53 Q36 59 46 53" stroke="#555" stroke-width="2.5" fill="none" stroke-linecap="round"/>` + baseTie(),
+  // annoyed frown
+  () => baseHead() + `
+    <ellipse cx="24" cy="36" rx="5" ry="5" fill="white"/>
+    <ellipse cx="48" cy="36" rx="5" ry="5" fill="white"/>
+    <circle  cx="25" cy="37" r="3" fill="#222"/>
+    <circle  cx="49" cy="37" r="3" fill="#222"/>
+    <path d="M20 30 Q24 28 26 30" stroke="#666" stroke-width="2" fill="none"/>
+    <path d="M46 30 Q48 28 52 30" stroke="#666" stroke-width="2" fill="none"/>
+    <ellipse cx="36" cy="47" rx="4" ry="3" fill="#e8c0a0"/>
+    <path d="M27 57 Q36 52 45 57" stroke="#555" stroke-width="2.5" fill="none" stroke-linecap="round"/>` + baseTie(),
+];
+
+// ── Hit expressions — MAXIMUM BỰA ──
+const HIT_FACES = [
+
+  // 1. SUPER DIZZY — bullseye target eyes, yellow egg bump, stars orbiting
+  () => baseHead('#ffaa77') + `
+    <ellipse cx="52" cy="16" rx="12" ry="10" fill="#ffdd33" stroke="#cc8800" stroke-width="2"/>
+    <ellipse cx="50" cy="13" rx="6"  ry="4"  fill="#ffee99" opacity=".8"/>
+    <circle  cx="52" cy="16" r="2.5" fill="#cc8800" opacity=".4"/>
+    <circle cx="24" cy="36" r="8" fill="white" stroke="#333" stroke-width="1.5"/>
+    <circle cx="24" cy="36" r="5.5" fill="none" stroke="#333" stroke-width="1.5"/>
+    <circle cx="24" cy="36" r="3"   fill="none" stroke="#333" stroke-width="1.5"/>
+    <circle cx="24" cy="36" r="1"   fill="#333"/>
+    <circle cx="48" cy="36" r="8" fill="white" stroke="#333" stroke-width="1.5"/>
+    <circle cx="48" cy="36" r="5.5" fill="none" stroke="#333" stroke-width="1.5"/>
+    <circle cx="48" cy="36" r="3"   fill="none" stroke="#333" stroke-width="1.5"/>
+    <circle cx="48" cy="36" r="1"   fill="#333"/>
+    <text x="0"  y="26" font-size="15">⭐</text>
+    <text x="56" y="22" font-size="13">✨</text>
+    <text x="26" y="7"  font-size="12">💫</text>
+    <ellipse cx="36" cy="57" rx="9" ry="8" fill="#cc2200"/>
+    <ellipse cx="36" cy="57" rx="6" ry="5" fill="#881100"/>` + baseTie(),
+
+  // 2. KO X-EYES — fat X through each eye, tongue flopping out, star burst
+  () => baseHead('#d8d0c0') + `
+    <polygon points="6,26 9,18 12,26 20,23 14,29 17,37 9,32 1,37 4,29" fill="#ffcc00" stroke="#cc8800" stroke-width="1"/>
+    <circle cx="24" cy="36" r="9" fill="white" stroke="#555" stroke-width="1.5"/>
+    <line x1="16" y1="28" x2="32" y2="44" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+    <line x1="32" y1="28" x2="16" y2="44" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="48" cy="36" r="9" fill="white" stroke="#555" stroke-width="1.5"/>
+    <line x1="40" y1="28" x2="56" y2="44" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+    <line x1="56" y1="28" x2="40" y2="44" stroke="#111" stroke-width="4" stroke-linecap="round"/>
+    <path d="M27 56 Q36 54 45 56 Q45 69 36 72 Q27 69 27 56Z" fill="#ff4466"/>
+    <ellipse cx="36" cy="66" rx="6" ry="4" fill="#ff8899" opacity=".6"/>
+    <path d="M64 20 Q67 27 64 34 Q61 27 64 20Z" fill="#88ccff"/>
+    <path d="M5  22 Q2  29 5  36 Q8  29 5  22Z" fill="#88ccff"/>` + baseTie(),
+
+  // 3. TEAR JETS — eyes shooting horizontal water cannons, wailing
+  () => baseHead('#aaccee') + `
+    <path d="M13 26 Q21 21 29 26" stroke="#222" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M43 26 Q51 21 59 26" stroke="#222" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <ellipse cx="24" cy="36" rx="8" ry="9" fill="#cce8ff" stroke="#3377cc" stroke-width="2"/>
+    <ellipse cx="48" cy="36" rx="8" ry="9" fill="#cce8ff" stroke="#3377cc" stroke-width="2"/>
+    <circle  cx="24" cy="35" r="5" fill="#1155cc"/>
+    <circle  cx="48" cy="35" r="5" fill="#1155cc"/>
+    <circle  cx="22" cy="33" r="2.5" fill="white"/>
+    <circle  cx="46" cy="33" r="2.5" fill="white"/>
+    <path d="M14 38 Q5 36 0 33"  stroke="#44aaff" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <path d="M14 42 Q4 42 0 42"  stroke="#88ccff" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M14 46 Q6 49 0 52"  stroke="#44aaff" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <path d="M58 38 Q67 36 72 33" stroke="#44aaff" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <path d="M58 42 Q68 42 72 42" stroke="#88ccff" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M58 46 Q66 49 72 52" stroke="#44aaff" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <path d="M21 57 Q36 72 51 57" fill="#2244aa"/>
+    <path d="M21 57 Q36 55 51 57" fill="#aaccee"/>` + baseTie(),
+
+  // 4. EYES POPPING OUT — eyeballs bulging huge, screaming with teeth
+  () => baseHead('#fff0aa') + `
+    <path d="M10 20 Q22 12 30 18" stroke="#3a2a1a" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <path d="M42 18 Q50 12 62 20" stroke="#3a2a1a" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <line x1="3"  y1="17" x2="12" y2="26" stroke="#ffcc00" stroke-width="3" stroke-linecap="round"/>
+    <line x1="69" y1="17" x2="60" y2="26" stroke="#ffcc00" stroke-width="3" stroke-linecap="round"/>
+    <line x1="1"  y1="36" x2="11" y2="36" stroke="#ffcc00" stroke-width="3" stroke-linecap="round"/>
+    <line x1="71" y1="36" x2="61" y2="36" stroke="#ffcc00" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="24" cy="34" r="11" fill="white" stroke="#333" stroke-width="1.5"/>
+    <circle cx="48" cy="34" r="11" fill="white" stroke="#333" stroke-width="1.5"/>
+    <circle cx="25" cy="35" r="6.5" fill="#111"/>
+    <circle cx="49" cy="35" r="6.5" fill="#111"/>
+    <circle cx="22" cy="32" r="3"   fill="white"/>
+    <circle cx="46" cy="32" r="3"   fill="white"/>
+    <ellipse cx="36" cy="62" rx="13" ry="11" fill="#cc1100"/>
+    <rect x="25" y="55" width="22" height="7" rx="1" fill="white"/>
+    <line x1="29" y1="55" x2="29" y2="62" stroke="#ddd" stroke-width="1.5"/>
+    <line x1="33" y1="55" x2="33" y2="62" stroke="#ddd" stroke-width="1.5"/>
+    <line x1="37" y1="55" x2="37" y2="62" stroke="#ddd" stroke-width="1.5"/>
+    <line x1="41" y1="55" x2="41" y2="62" stroke="#ddd" stroke-width="1.5"/>
+    <line x1="45" y1="55" x2="45" y2="62" stroke="#ddd" stroke-width="1.5"/>` + baseTie(),
+
+  // 5. RAGE STEAM — purple-red, forehead vein, steam jets, gritted teeth
+  () => baseHead('#cc2244') + `
+    <path d="M24 23 Q28 18 32 23 Q36 18 40 23 Q44 18 48 23" stroke="#ff5577" stroke-width="2.5" fill="none"/>
+    <path d="M14 29 L30 34" stroke="#111" stroke-width="5.5" stroke-linecap="round"/>
+    <path d="M42 34 L58 29" stroke="#111" stroke-width="5.5" stroke-linecap="round"/>
+    <circle cx="24" cy="38" r="8" fill="white" stroke="#222" stroke-width="1.5"/>
+    <circle cx="48" cy="38" r="8" fill="white" stroke="#222" stroke-width="1.5"/>
+    <circle cx="24" cy="39" r="4.5" fill="#cc0000"/>
+    <circle cx="48" cy="39" r="4.5" fill="#cc0000"/>
+    <circle cx="22" cy="37" r="1.5" fill="white"/>
+    <circle cx="46" cy="37" r="1.5" fill="white"/>
+    <path d="M18 10 Q15 2 18 -3 Q21 2 18 10Z"  fill="#ff9933"/>
+    <path d="M36 8  Q33 0 36 -4 Q39 0 36  8Z"  fill="#ff9933"/>
+    <path d="M54 10 Q51 2 54 -3 Q57 2 54 10Z"  fill="#ff9933"/>
+    <rect x="22" y="53" width="28" height="10" rx="3" fill="#770011"/>
+    <rect x="23" y="53" width="26" height="5"  rx="1" fill="white"/>
+    <line x1="27" y1="53" x2="27" y2="58" stroke="#ddd" stroke-width="1.5"/>
+    <line x1="31" y1="53" x2="31" y2="58" stroke="#ddd" stroke-width="1.5"/>
+    <line x1="35" y1="53" x2="35" y2="58" stroke="#ddd" stroke-width="1.5"/>
+    <line x1="39" y1="53" x2="39" y2="58" stroke="#ddd" stroke-width="1.5"/>
+    <line x1="43" y1="53" x2="43" y2="58" stroke="#ddd" stroke-width="1.5"/>
+    <line x1="47" y1="53" x2="47" y2="58" stroke="#ddd" stroke-width="1.5"/>` + baseTie(),
+
+  // 6. CROSS-EYED BIRDS — cross eyes, bump, cartoon birds (M-shapes) flying
+  () => baseHead('#ffe8cc') + `
+    <ellipse cx="11" cy="22" rx="10" ry="8" fill="#ffdd33" stroke="#cc8800" stroke-width="1.5"/>
+    <ellipse cx="9"  cy="19" rx="5"  ry="3" fill="#ffee99" opacity=".7"/>
+    <circle cx="24" cy="36" r="8" fill="white" stroke="#333" stroke-width="1.5"/>
+    <circle cx="48" cy="36" r="8" fill="white" stroke="#333" stroke-width="1.5"/>
+    <circle cx="28" cy="37" r="5" fill="#111"/>
+    <circle cx="44" cy="37" r="5" fill="#111"/>
+    <circle cx="30" cy="35" r="2" fill="white"/>
+    <circle cx="42" cy="35" r="2" fill="white"/>
+    <path d="M1  13 Q5  8  9  13 Q13 8 17 13" stroke="#333" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    <path d="M55 8  Q59 4  63 8  Q67 4 71 8"  stroke="#333" stroke-width="2"   fill="none" stroke-linecap="round"/>
+    <path d="M27 3  Q31 -1 35 3  Q39 -1 43 3" stroke="#333" stroke-width="2"   fill="none" stroke-linecap="round"/>
+    <path d="M24 56 Q28 63 32 56 Q36 49 40 56 Q44 63 48 56"
+          stroke="#cc6600" stroke-width="3" fill="none" stroke-linecap="round"/>` + baseTie(),
+
+  // 7. GREEN MELT — heavy droopy eyelids, sweat beads, dripping tongue, spiral
+  () => baseHead('#77bb55') + `
+    <circle cx="24" cy="36" r="9" fill="white" stroke="#446633" stroke-width="1.5"/>
+    <circle cx="48" cy="36" r="9" fill="white" stroke="#446633" stroke-width="1.5"/>
+    <circle cx="24" cy="38" r="5.5" fill="#225511"/>
+    <circle cx="48" cy="38" r="5.5" fill="#225511"/>
+    <ellipse cx="24" cy="29" rx="9.5" ry="8" fill="#77bb55"/>
+    <ellipse cx="48" cy="29" rx="9.5" ry="8" fill="#77bb55"/>
+    <path d="M15 42 Q24 46 33 42" stroke="#55993a" stroke-width="2" fill="none"/>
+    <path d="M39 42 Q48 46 57 42" stroke="#55993a" stroke-width="2" fill="none"/>
+    <path d="M28 21 Q36 15 44 21 Q48 26 44 31 Q36 35 28 31 Q26 26 28 21"
+          stroke="#336611" stroke-width="2" fill="none"/>
+    <path d="M22 56 Q26 63 30 56 Q34 49 38 56 Q42 63 46 56 Q50 49 50 56"
+          stroke="#336622" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M29 60 Q36 58 43 60 Q43 74 36 77 Q29 74 29 60Z" fill="#ff5566"/>
+    <path d="M30 71 Q36 74 42 71" stroke="#ff8899" stroke-width="1.5" fill="none"/>
+    <path d="M66 19 Q69 26 66 33 Q63 26 66 19Z" fill="#55bb33"/>
+    <path d="M6  21 Q3  28 6  35 Q9  28 6  21Z" fill="#55bb33"/>
+    <circle cx="61" cy="36" r="3.5" fill="#77cc44" opacity=".8"/>
+    <circle cx="10" cy="38" r="2.5" fill="#77cc44" opacity=".7"/>` + baseTie(),
+];
+
+// Hit face labels (1 per face, for pairing)
+const REACTION_TEXTS = [
+  'Trừ lương cả đám giờ!',
+  'Tháng này hủy KPI, cắt hết bonus!',
+  'Lại đi trễ? Đi làm hay đi trẩy hội?',
+  'Nghỉ phép lắm thế? Định nghỉ hưu luôn à?',
+  'OT không lương nhé mấy đứa!',
+  'Hết kinh phí rồi, uống trà đá thay trà sữa đi!',
+  'Tao đuổi hết bây giờ!',
+];
+
+// Boss curse lines — đúng theo yêu cầu
+const BOSS_LINES = [
+  'Làm ăn như cứt!',
+  'Trừ hết lương giờ!',
+  'Đuổi việc hết!',
+  'Ngu như bò!',
+  'Lại báo nữa à?',
+  'Làm ăn như hạch!',
+  'Cút việc đi!',
+  'Đầu toàn đất!',
+  'Nghỉ mẹ đi!',
+  'Xóa sổ cả lũ!',
+  'Làm cái éo gì đấy?',
+  'Mất não à em?',
+  'Biến cho khuất mắt!',
+  'Chậm như rùa!',
+  'File như rác!',
+  'Lại đi trễ à?',
+  'Nín văn vở đi!',
+  'Cút ngay!',
+  'Ăn hại thế!',
+  'Muốn nghỉ việc không?',
+];
+// Shuffle deck — plays all 20 lines before any repeats
+let linesDeck = [];
+function getBossLine() {
+  if (linesDeck.length === 0) {
+    // Refill & Fisher-Yates shuffle
+    linesDeck = [...BOSS_LINES];
+    for (let i = linesDeck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [linesDeck[i], linesDeck[j]] = [linesDeck[j], linesDeck[i]];
+    }
+  }
+  return linesDeck.pop();
+}
+
+let lastHitIdx = -1;
+function getHitFaceIdx() {
+  // don't repeat same expression twice in a row
+  let idx;
+  do { idx = Math.floor(Math.random() * HIT_FACES.length); }
+  while (idx === lastHitIdx);
+  lastHitIdx = idx;
+  return idx;
+}
+
+// ════════════════════════════════════════════════════════
+//  BUILD SLOTS
+// ════════════════════════════════════════════════════════
+const slots = [];
+
+SLOTS_X.forEach((x, i) => {
+  // ground shadow (dark oval on grass under boss)
+  const shadow = document.createElement('div');
+  shadow.className = 'ground-shadow';
+  shadow.style.cssText = `left:${x + 17}px;`;
+  gameArea.appendChild(shadow);
+
+  // boss slot
+  const bossSlot = document.createElement('div');
+  bossSlot.className = 'boss-slot';
+  bossSlot.style.cssText = `left:${x}px; z-index:${20+i}`;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'boss-wrap';
+  wrap.dataset.index = i;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('viewBox','0 0 72 90');
+  svg.setAttribute('width','158');
+  svg.setAttribute('height','158');
+  svg.classList.add('boss-svg');
+
+  // defs for custom face clip
+  const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+  const cp   = document.createElementNS('http://www.w3.org/2000/svg','clipPath');
+  cp.setAttribute('id',`fc${i}`);
+  const cc = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  cc.setAttribute('cx','36'); cc.setAttribute('cy','36'); cc.setAttribute('r','35');
+  cp.appendChild(cc); defs.appendChild(cp); svg.appendChild(defs);
+
+  const fg = document.createElementNS('http://www.w3.org/2000/svg','g');
+  fg.classList.add('boss-face');
+  svg.appendChild(fg);
+  wrap.appendChild(svg);
+  bossSlot.appendChild(wrap);
+  gameArea.appendChild(bossSlot);
+
+  wrap.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!running || !activeSlots.has(i)) return;
+    hitBoss(i, e.clientX, e.clientY);
+  });
+
+  slots.push({ bossSlot, wrap, fg, index: i });
+});
+
+function setFace(idx, html) {
+  if (customFace) {
+    // Idle: show real photo
+    slots[idx].fg.innerHTML =
+      `<image href="${customFace}" x="1" y="1" width="70" height="70"
+       clip-path="url(#fc${idx})" preserveAspectRatio="xMidYMid slice"/>`;
+  } else {
+    slots[idx].fg.innerHTML = html;
+  }
+}
+
+// Hit face: ALWAYS show the funny SVG expression (even when custom face is loaded)
+// After animation, setIdleFace() restores the custom photo
+function setHitFace(idx, hitIdx) {
+  slots[idx].fg.innerHTML = HIT_FACES[hitIdx]();
+}
+
+function setIdleFace(idx) {
+  const fn = IDLE_FACES[Math.floor(Math.random() * IDLE_FACES.length)];
+  setFace(idx, fn());
+}
+
+// ════════════════════════════════════════════════════════
+//  HIT LOGIC
+// ════════════════════════════════════════════════════════
+function hitBoss(index, cx, cy) {
+  activeSlots.delete(index);
+  const { wrap } = slots[index];
+
+  // random hit expression — ALWAYS show SVG (regardless of custom face)
+  const hitIdx = getHitFaceIdx();
+  setHitFace(index, hitIdx);
+
+  // pick a random boss line (independent of face expression)
+  const line = getBossLine();
+
+  // sounds
+  playHitSound();
+  speakReaction(line);
+
+  // reaction bubble
+  const bubble = document.createElement('div');
+  bubble.className = 'reaction-bubble';
+  bubble.textContent = line;
+  wrap.appendChild(bubble);
+  setTimeout(() => bubble.remove(), 1800);
+
+  // combo
+  combo++;
+  clearTimeout(comboTimer);
+  comboTimer = setTimeout(() => { combo = 0; combDisplay.classList.remove('active'); }, 1400);
+  combDisplay.classList.add('active');
+  comboVal.textContent = combo;
+
+  const pts = combo >= 3 ? combo * 10 : 10;
+  score += pts;
+  scoreDisplay.textContent = score;
+  showScorePop(cx, cy, `+${pts}`);
+
+  // PHASE 1: shake-in-place (0.35s) then FREEZE showing expression (750ms total)
+  wrap.classList.add('hit-freeze');
+
+  setTimeout(() => {
+    // PHASE 2: exit animation
+    wrap.classList.remove('hit-freeze');
+    wrap.classList.remove('visible');
+    wrap.classList.add('hit-anim');
+    setTimeout(() => {
+      wrap.classList.remove('hit-anim');
+      setIdleFace(index);
+    }, 440);
+  }, 750);
+}
+
+function showScorePop(cx, cy, text) {
+  const rect = gameArea.getBoundingClientRect();
+  const d = document.createElement('div');
+  d.className = 'score-pop'; d.textContent = text;
+  d.style.left = (cx - rect.left - 20) + 'px';
+  d.style.top  = (cy - rect.top  - 20) + 'px';
+  gameArea.appendChild(d);
+  setTimeout(() => d.remove(), 950);
+}
+
+// ════════════════════════════════════════════════════════
+//  AUDIO
+// ════════════════════════════════════════════════════════
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playHitSound() {
+  try {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+
+    // Low THWACK thud
+    const thud = ctx.createOscillator();
+    const thudGain = ctx.createGain();
+    thud.type = 'sine';
+    thud.frequency.setValueAtTime(180, now);
+    thud.frequency.exponentialRampToValueAtTime(40, now + 0.12);
+    thudGain.gain.setValueAtTime(1.0, now);
+    thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    thud.connect(thudGain); thudGain.connect(ctx.destination);
+    thud.start(now); thud.stop(now + 0.18);
+
+    // Crack snap (short noise burst)
+    const dur = 0.06;
+    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++)
+      data[i] = (Math.random()*2-1) * Math.pow(1 - i/data.length, 3);
+    const crack = ctx.createBufferSource();
+    crack.buffer = buf;
+    const crackFilter = ctx.createBiquadFilter();
+    crackFilter.type = 'highpass'; crackFilter.frequency.value = 1200;
+    const crackGain = ctx.createGain();
+    crackGain.gain.setValueAtTime(0.6, now);
+    crack.connect(crackFilter); crackFilter.connect(crackGain); crackGain.connect(ctx.destination);
+    crack.start(now);
+  } catch(e) {}
+}
+
+// Speak the reaction text using Vietnamese TTS
+function speakReaction(text) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  // Strip emoji for cleaner pronunciation
+  const clean = text.replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim();
+  const utt = new SpeechSynthesisUtterance(clean);
+  utt.lang = 'vi-VN';
+  utt.rate = 0.88;   // chậm hơn, nghe nặng nề hơn
+  utt.pitch = 0.6;   // trầm, giọng ông sếp to con
+  utt.volume = 1.0;
+  // Try Vietnamese voice; fall back to any available
+  const voices = window.speechSynthesis.getVoices();
+  const viVoice = voices.find(v => v.lang.startsWith('vi'));
+  if (viVoice) utt.voice = viVoice;
+  window.speechSynthesis.speak(utt);
+}
+
+// ════════════════════════════════════════════════════════
+//  BACKGROUND MUSIC  (Yakety Sax / Benny Hill bựa style)
+// ════════════════════════════════════════════════════════
+let bgMusicRunning = false;
+let bgGainNode = null;
+
+// [freq Hz, duration sec] — 0 = rest
+const BG_MELODY = [
+  // Phrase A
+  [494,0.11],[587,0.11],[659,0.22],[659,0.11],[587,0.11],[494,0.11],[587,0.11],
+  [440,0.22],[440,0.11],[392,0.11],[440,0.22],
+  [392,0.11],[440,0.11],[494,0.11],[440,0.11],[392,0.11],[330,0.11],
+  [349,0.22],[349,0.11],[330,0.11],[294,0.33],[0,0.11],
+  // Phrase B (variation)
+  [494,0.11],[587,0.11],[659,0.22],[659,0.11],[587,0.11],[494,0.11],[587,0.11],
+  [440,0.22],[440,0.11],[392,0.11],[440,0.22],
+  [392,0.11],[440,0.11],[494,0.11],[440,0.11],[392,0.11],[330,0.11],
+  [349,0.11],[330,0.11],[294,0.11],[262,0.11],[262,0.44],[0,0.22],
+];
+const BG_BASS = [131,147,165,131, 147,165,175,147];
+
+function startBgMusic() {
+  if (bgMusicRunning) return;
+  bgMusicRunning = true;
+  const ctx = getAudioCtx();
+  bgGainNode = ctx.createGain();
+  bgGainNode.gain.value = 0.07;   // quiet background
+  bgGainNode.connect(ctx.destination);
+
+  let nextTime  = ctx.currentTime + 0.05;
+  let noteIdx   = 0;
+  let bassIdx   = 0;
+  let beatTick  = 0;
+
+  function schedule() {
+    if (!bgMusicRunning) return;
+    while (nextTime < ctx.currentTime + 0.55) {
+      const [freq, dur] = BG_MELODY[noteIdx % BG_MELODY.length];
+
+      // ── Melody (square wave – retro chiptune) ──
+      if (freq > 0) {
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.value = freq;
+        osc.detune.value = (Math.random()-0.5)*6;
+        env.gain.setValueAtTime(0.45, nextTime);
+        env.gain.setValueAtTime(0.45, nextTime + dur*0.75);
+        env.gain.linearRampToValueAtTime(0, nextTime + dur*0.96);
+        osc.connect(env); env.connect(bgGainNode);
+        osc.start(nextTime); osc.stop(nextTime + dur);
+      }
+
+      // ── Bass (triangle, every 4 notes) ──
+      if (beatTick % 4 === 0) {
+        const bf = BG_BASS[bassIdx % BG_BASS.length];
+        bassIdx++;
+        const bo = ctx.createOscillator();
+        const be = ctx.createGain();
+        bo.type = 'triangle'; bo.frequency.value = bf;
+        be.gain.setValueAtTime(0.9, nextTime);
+        be.gain.exponentialRampToValueAtTime(0.001, nextTime + 0.38);
+        bo.connect(be); be.connect(bgGainNode);
+        bo.start(nextTime); bo.stop(nextTime + 0.38);
+      }
+
+      // ── Snare click on off-beats ──
+      if (beatTick % 8 === 4) {
+        const sLen = 0.055;
+        const sBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate*sLen), ctx.sampleRate);
+        const sD   = sBuf.getChannelData(0);
+        for (let i=0;i<sD.length;i++) sD[i]=(Math.random()*2-1)*(1-i/sD.length);
+        const sSrc = ctx.createBufferSource();
+        sSrc.buffer = sBuf;
+        const sFlt = ctx.createBiquadFilter();
+        sFlt.type='bandpass'; sFlt.frequency.value=2200; sFlt.Q.value=0.9;
+        const sEnv = ctx.createGain();
+        sEnv.gain.setValueAtTime(0.28, nextTime);
+        sSrc.connect(sFlt); sFlt.connect(sEnv); sEnv.connect(bgGainNode);
+        sSrc.start(nextTime);
+      }
+
+      nextTime += dur;
+      noteIdx++;
+      beatTick++;
+    }
+    setTimeout(schedule, 90);
+  }
+  schedule();
+}
+
+function stopBgMusic() {
+  bgMusicRunning = false;
+  if (bgGainNode) {
+    try {
+      const ctx = getAudioCtx();
+      bgGainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
+    } catch(e) {}
+    bgGainNode = null;
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  SPAWNING
+// ════════════════════════════════════════════════════════
+function progress() { return 1 - timeLeft / TOTAL_TIME; }
+function jittered(base) { return base * (1 + (Math.random()*2-1) * JITTER); }
+
+function spawnBoss() {
+  if (!running) return;
+  const avail = [];
+  for (let i = 0; i < NUM_HOLES; i++) if (!activeSlots.has(i)) avail.push(i);
+  if (!avail.length) return scheduleSpawn();
+
+  const idx = avail[Math.floor(Math.random() * avail.length)];
+  activeSlots.add(idx);
+  const { wrap } = slots[idx];
+  setIdleFace(idx);
+  wrap.classList.remove('hit-anim');
+  wrap.classList.add('visible');
+
+  const p = progress();
+  const showMs = jittered(Math.max(MIN_SHOW_MS, BASE_SHOW_MS - p*(BASE_SHOW_MS-MIN_SHOW_MS)));
+  setTimeout(() => {
+    if (activeSlots.has(idx)) {
+      activeSlots.delete(idx);
+      wrap.classList.remove('visible');
+    }
+  }, showMs);
+
+  scheduleSpawn();
+}
+
+function scheduleSpawn() {
+  if (!running) return;
+  const p = progress();
+  const intv = jittered(Math.max(MIN_INTERVAL, BASE_INTERVAL - p*(BASE_INTERVAL-MIN_INTERVAL)));
+  spawnTimer = setTimeout(spawnBoss, intv);
+}
+
+// ════════════════════════════════════════════════════════
+//  TIMER
+// ════════════════════════════════════════════════════════
+function tick() {
+  timeLeft--;
+  timerDisplay.textContent = timeLeft;
+  timerBar.style.width = (timeLeft / TOTAL_TIME * 100) + '%';
+  if (timeLeft <= 10) {
+    timerDisplay.style.color = '#ff4444';
+    timerBar.style.background = '#ff4444';
+  }
+  if (timeLeft <= 0) endGame();
+  else countdownTimer = setTimeout(tick, 1000);
+}
+
+// ════════════════════════════════════════════════════════
+//  GAME CONTROL
+// ════════════════════════════════════════════════════════
+function startGame() {
+  score = 0; timeLeft = TOTAL_TIME; combo = 0; running = true;
+  activeSlots.clear();
+  scoreDisplay.textContent = '0';
+  timerDisplay.textContent = TOTAL_TIME;
+  timerDisplay.style.color = '#ff6b6b';
+  timerBar.style.width = '100%';
+  timerBar.style.background = 'linear-gradient(90deg,#ff6b6b,#ffd700)';
+  startOverlay.style.display = 'none';
+  gameoverOverlay.style.display = 'none';
+  slots.forEach(s => s.wrap.classList.remove('visible','hit-anim'));
+  startBgMusic();
+  countdownTimer = setTimeout(tick, 1000);
+  scheduleSpawn();
+}
+
+function endGame() {
+  running = false;
+  clearTimeout(spawnTimer); clearTimeout(countdownTimer);
+  slots.forEach(s => s.wrap.classList.remove('visible'));
+  activeSlots.clear();
+  stopBgMusic();
+  window.speechSynthesis && window.speechSynthesis.cancel();
+  finalScore.textContent = score;
+  rankText.textContent = getRank(score);
+  gameoverOverlay.style.display = 'flex';
+}
+
+function getRank(s) {
+  if (s >= 600) return '🏆 Sếp đã xin thôi việc rồi!';
+  if (s >= 400) return '💪 Chiến binh văn phòng đỉnh!';
+  if (s >= 200) return '😤 Ổn đấy, vụt mạnh hơn nữa!';
+  if (s >= 80)  return '🐢 Cần tập thêm sức mạnh cổ tay...';
+  return '😴 Sếp đang ngủ mà bạn cũng ngủ à?';
+}
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('restart-btn').addEventListener('click', startGame);
+gameArea.addEventListener('mouseleave', () => { combo = 0; combDisplay.classList.remove('active'); });
+</script>
+</body>
+</html>
