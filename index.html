@@ -976,9 +976,10 @@ function startBgMusic() {
   function runSchedule() {
     if (!bgMusicRunning) return;
 
-    // If iOS suspended the context again, resume and retry
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(() => setTimeout(runSchedule, 150)).catch(() => {});
+    // Context suspended (Chrome/iOS auto-suspend) — keep loop alive, keep retrying
+    if (ctx.state !== 'running') {
+      ctx.resume().catch(() => {});
+      setTimeout(runSchedule, 300);   // don't exit — pick up when running again
       return;
     }
 
@@ -1157,6 +1158,14 @@ function getRank(s) {
 
 document.getElementById('start-btn').addEventListener('click', startGame);
 document.getElementById('restart-btn').addEventListener('click', startGame);
+
+// Resume AudioContext whenever user returns to tab or touches screen
+// (Chrome mobile suspends ctx on notification, screen dim, app switch, etc.)
+function _resumeAudio() {
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) _resumeAudio(); });
+document.addEventListener('touchstart',       _resumeAudio, { passive: true });
 gameArea.addEventListener('mouseleave', () => { combo = 0; combDisplay.classList.remove('active'); });
 </script>
 </body>
