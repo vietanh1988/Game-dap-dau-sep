@@ -943,112 +943,104 @@ function speakReaction(text) {
 // ════════════════════════════════════════════════════════
 //  BACKGROUND MUSIC  (Yakety Sax / Benny Hill bựa style)
 // ════════════════════════════════════════════════════════
-let bgMusicRunning = false;
-let bgGainNode = null;
+let bgMusicRunning  = false;
+let bgGainNode      = null;
+let bgTickActive    = false;   // true while setTimeout loop is running
+let _bgT = 0, _bgN = 0, _bgB = 0, _bgBeat = 0;  // scheduler state (module-level)
 
-// [freq Hz, duration sec] — 0 = rest
 const BG_MELODY = [
-  // Phrase A
   [494,0.11],[587,0.11],[659,0.22],[659,0.11],[587,0.11],[494,0.11],[587,0.11],
   [440,0.22],[440,0.11],[392,0.11],[440,0.22],
   [392,0.11],[440,0.11],[494,0.11],[440,0.11],[392,0.11],[330,0.11],
   [349,0.22],[349,0.11],[330,0.11],[294,0.33],[0,0.11],
-  // Phrase B (variation)
   [494,0.11],[587,0.11],[659,0.22],[659,0.11],[587,0.11],[494,0.11],[587,0.11],
   [440,0.22],[440,0.11],[392,0.11],[440,0.22],
   [392,0.11],[440,0.11],[494,0.11],[440,0.11],[392,0.11],[330,0.11],
   [349,0.11],[330,0.11],[294,0.11],[262,0.11],[262,0.44],[0,0.22],
 ];
-const BG_BASS = [131,147,165,131, 147,165,175,147];
+const BG_BASS = [131,147,165,131,147,165,175,147];
+
+// Module-level tick — accessible from onstatechange
+function _bgTick() {
+  if (!bgMusicRunning || !bgGainNode) { bgTickActive = false; return; }
+  const ctx = audioCtx;
+  if (!ctx || ctx.state !== 'running') { bgTickActive = false; return; }
+
+  bgTickActive = true;
+  if (_bgT < ctx.currentTime) _bgT = ctx.currentTime + 0.05;
+
+  while (_bgT < ctx.currentTime + 0.55) {
+    const [freq, dur] = BG_MELODY[_bgN % BG_MELODY.length];
+
+    if (freq > 0) {
+      const osc = ctx.createOscillator(), env = ctx.createGain();
+      osc.type = 'square'; osc.frequency.value = freq;
+      osc.detune.value = (Math.random()-0.5)*6;
+      env.gain.setValueAtTime(0.45, _bgT);
+      env.gain.setValueAtTime(0.45, _bgT + dur*0.75);
+      env.gain.linearRampToValueAtTime(0, _bgT + dur*0.96);
+      osc.connect(env); env.connect(bgGainNode);
+      osc.start(_bgT); osc.stop(_bgT + dur);
+    }
+
+    if (_bgBeat % 4 === 0) {
+      const bf = BG_BASS[_bgB % BG_BASS.length]; _bgB++;
+      const bo = ctx.createOscillator(), be = ctx.createGain();
+      bo.type = 'triangle'; bo.frequency.value = bf;
+      be.gain.setValueAtTime(0.9, _bgT);
+      be.gain.exponentialRampToValueAtTime(0.001, _bgT + 0.38);
+      bo.connect(be); be.connect(bgGainNode);
+      bo.start(_bgT); bo.stop(_bgT + 0.38);
+    }
+
+    if (_bgBeat % 8 === 4) {
+      const sLen = 0.055;
+      const sBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate*sLen), ctx.sampleRate);
+      const sD = sBuf.getChannelData(0);
+      for (let i=0;i<sD.length;i++) sD[i]=(Math.random()*2-1)*(1-i/sD.length);
+      const sSrc = ctx.createBufferSource(); sSrc.buffer = sBuf;
+      const sFlt = ctx.createBiquadFilter();
+      sFlt.type='bandpass'; sFlt.frequency.value=2200; sFlt.Q.value=0.9;
+      const sEnv = ctx.createGain(); sEnv.gain.setValueAtTime(0.28, _bgT);
+      sSrc.connect(sFlt); sFlt.connect(sEnv); sEnv.connect(bgGainNode);
+      sSrc.start(_bgT);
+    }
+
+    _bgT += dur; _bgN++; _bgBeat++;
+  }
+  setTimeout(_bgTick, 90);
+}
 
 function startBgMusic() {
   if (bgMusicRunning) return;
   bgMusicRunning = true;
+  bgTickActive   = false;
+  _bgT = 0; _bgN = 0; _bgB = 0; _bgBeat = 0;
 
   const ctx = getAudioCtx();
   bgGainNode = ctx.createGain();
   bgGainNode.gain.value = 0.07;
   bgGainNode.connect(ctx.destination);
 
-  // ── Inner scheduler (runs only when ctx is 'running') ──
-  let nextTime = 0, noteIdx = 0, bassIdx = 0, beatTick = 0;
-
-  function runSchedule() {
-    if (!bgMusicRunning) return;
-
-    // Context suspended (Chrome/iOS auto-suspend) — keep loop alive, keep retrying
-    if (ctx.state !== 'running') {
-      ctx.resume().catch(() => {});
-      setTimeout(runSchedule, 300);   // don't exit — pick up when running again
-      return;
+  // KEY FIX: onstatechange restarts _bgTick the INSTANT context becomes 'running'
+  // This fires whether resume() was called from user gesture or auto-resumed by browser
+  ctx.onstatechange = () => {
+    if (ctx.state === 'running' && bgMusicRunning && !bgTickActive) {
+      _bgTick();
     }
+  };
 
-    // On first run, anchor nextTime to now
-    if (nextTime < ctx.currentTime) nextTime = ctx.currentTime + 0.05;
-
-    while (nextTime < ctx.currentTime + 0.55) {
-      const [freq, dur] = BG_MELODY[noteIdx % BG_MELODY.length];
-
-      if (freq > 0) {
-        const osc = ctx.createOscillator();
-        const env = ctx.createGain();
-        osc.type = 'square';
-        osc.frequency.value = freq;
-        osc.detune.value = (Math.random()-0.5)*6;
-        env.gain.setValueAtTime(0.45, nextTime);
-        env.gain.setValueAtTime(0.45, nextTime + dur*0.75);
-        env.gain.linearRampToValueAtTime(0, nextTime + dur*0.96);
-        osc.connect(env); env.connect(bgGainNode);
-        osc.start(nextTime); osc.stop(nextTime + dur);
-      }
-
-      if (beatTick % 4 === 0) {
-        const bf = BG_BASS[bassIdx % BG_BASS.length];
-        bassIdx++;
-        const bo = ctx.createOscillator();
-        const be = ctx.createGain();
-        bo.type = 'triangle'; bo.frequency.value = bf;
-        be.gain.setValueAtTime(0.9, nextTime);
-        be.gain.exponentialRampToValueAtTime(0.001, nextTime + 0.38);
-        bo.connect(be); be.connect(bgGainNode);
-        bo.start(nextTime); bo.stop(nextTime + 0.38);
-      }
-
-      if (beatTick % 8 === 4) {
-        const sLen = 0.055;
-        const sBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate*sLen), ctx.sampleRate);
-        const sD   = sBuf.getChannelData(0);
-        for (let i=0;i<sD.length;i++) sD[i]=(Math.random()*2-1)*(1-i/sD.length);
-        const sSrc = ctx.createBufferSource();
-        sSrc.buffer = sBuf;
-        const sFlt = ctx.createBiquadFilter();
-        sFlt.type='bandpass'; sFlt.frequency.value=2200; sFlt.Q.value=0.9;
-        const sEnv = ctx.createGain();
-        sEnv.gain.setValueAtTime(0.28, nextTime);
-        sSrc.connect(sFlt); sFlt.connect(sEnv); sEnv.connect(bgGainNode);
-        sSrc.start(nextTime);
-      }
-
-      nextTime += dur;
-      noteIdx++;
-      beatTick++;
-    }
-    setTimeout(runSchedule, 90);
-  }
-
-  // Wait for ctx.resume() to finish before starting the loop
-  const kick = () => { if (bgMusicRunning) runSchedule(); };
-  if (ctx.state === 'running') kick();
-  else ctx.resume().then(kick).catch(() => {});
+  if (ctx.state === 'running') _bgTick();
+  else ctx.resume().catch(() => {});
 }
 
 function stopBgMusic() {
   bgMusicRunning = false;
+  bgTickActive   = false;
+  if (audioCtx) audioCtx.onstatechange = null;  // remove listener
   if (bgGainNode) {
-    try {
-      const ctx = getAudioCtx();
-      bgGainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
-    } catch(e) {}
+    try { bgGainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.5); }
+    catch(e) {}
     bgGainNode = null;
   }
 }
